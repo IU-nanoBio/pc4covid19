@@ -1,9 +1,9 @@
-# substrates  Tab
+# substrates  Out:Plots
 
 import os, math
 from pathlib import Path
 from ipywidgets import Layout, Label, Text, Checkbox, Button, BoundedIntText, HBox, VBox, Box, \
-    FloatText, Dropdown, interactive
+    FloatText, Dropdown, SelectMultiple, interactive
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm
 from matplotlib.ticker import MaxNLocator
@@ -11,7 +11,9 @@ from matplotlib.collections import LineCollection
 from matplotlib.patches import Circle, Ellipse, Rectangle
 from matplotlib.collections import PatchCollection
 import matplotlib.colors as mplc
+from matplotlib import gridspec
 from collections import deque
+from pyMCDS import pyMCDS
 import numpy as np
 import scipy.io
 import xml.etree.ElementTree as ET  # https://docs.python.org/2/library/xml.etree.elementtree.html
@@ -41,10 +43,23 @@ class SubstrateTab(object):
         self.output_dir = '.'
         # self.output_dir = 'tmpdir'
 
-        self.figsize_width_substrate = 15.0  # allow extra for colormap
-        self.figsize_height_substrate = 12.5
-        self.figsize_width_svg = 12.0
-        self.figsize_height_svg = 12.0
+        # These are recomputed below 
+        # self.figsize_width_substrate = 15.0  # allow extra for colormap
+        # self.figsize_height_substrate = 12.5
+
+        foo=12.0
+        self.width_substrate = foo  # allow extra for colormap
+        self.height_substrate = foo
+
+        self.figsize_width_svg = foo
+        self.figsize_height_svg = foo
+        self.width_svg = foo
+        self.height_svg = foo
+
+        self.ax0 = None
+        self.ax1 = None
+
+        self.custom_data_plotted = False
 
         # self.fig = plt.figure(figsize=(7.2,6))  # this strange figsize results in a ~square contour plot
 
@@ -106,28 +121,82 @@ class SubstrateTab(object):
         # "plot_size" controls the size of the tab height, not the plot (rf. figsize for that)
         # NOTE: the Substrates Plot tab has an extra row of widgets at the top of it (cf. Cell Plots tab)
         svg_plot_size = '700px'
-        svg_plot_size = '600px'
-        svg_plot_size = '700px'
         svg_plot_size = '900px'
-        self.i_plot.layout.width = svg_plot_size
-        self.i_plot.layout.height = svg_plot_size
+        plot_area_width = '1500px'
+        plot_area_height = '900px'
+        self.i_plot.layout.width = plot_area_width 
+        self.i_plot.layout.height = plot_area_height 
 
         self.fontsize = 20
+        # self.fontsize = 30
 
-            # description='# cell frames',
-        self.max_frames = BoundedIntText(
-            min=0, max=99999, value=max_frames,
-            description='# cell frames',
-           layout=Layout(width='160px'),
-        )
+
+        #============  new GUI =================
+        self.max_frames = BoundedIntText(value=0,description='# cell frames',layout=Layout(width='160px'))  # border='1px solid black',
+        self.cells_toggle = Checkbox(description='Cells',value=True, style = {'description_width': 'initial'}, layout=Layout(width='110px', )) #border='1px solid black'))
+        self.cell_edges_toggle = Checkbox(description='edge',value=self.show_edge, style = {'description_width': 'initial'}, layout=Layout(width='110px',))  #   align_items='stretch',
+            
+
+        layout1 = Layout(display='flex',
+                            flex_flow='row',
+                            align_items='center',
+                            width='25%', )  #border='1px solid black')
+        hb1=HBox([self.cells_toggle,self.cell_edges_toggle ])  # layout=layout1)
+        cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='350px',border='1px solid black',))
+        #--------------------------
+        self.substrates_toggle=Checkbox(description='Substrates', style = {'description_width': 'initial'})
+
+        self.field_min_max = {'assembled_virion':[0.,1.,False]  }
+        # hacky I know, but make a dict that's got (key,value) reversed from the dict in the Dropdown below
+
+        # ipywidgets 8 docs: Selection widgets no longer accept a dictionary of options. Pass a list of key-value pairs instead.
+        self.field_dict = {0:'director signal', 1:'cargo signal'}
+
+        self.substrate_choice = Dropdown(options={'assembled_virion': 0},layout=Layout(width='150px'))
+        self.colormap_dd = Dropdown(options=['viridis', 'jet', 'YlOrRd'],value='YlOrRd',layout=Layout(width='200px'))
+        hb2=HBox([self.substrates_toggle,self.substrate_choice,self.colormap_dd], layout=Layout(width='350px', )) # border='1px solid black',))
+
+        self.colormap_fixed_toggle = Checkbox(description='Fix',style = {'description_width': 'initial'}, layout=Layout(width='60px'))
+        constWidth2 = '160px'
+        self.colormap_min = FloatText(
+                    description='Min',
+                    value=0,
+                    step = 0.1, 
+                    layout=Layout(width=constWidth2),)
+        self.colormap_max = FloatText(
+                    description='Max',
+                    value=38,
+                    step = 0.1,
+                    layout=Layout(width=constWidth2),)
+        # hb3=HBox([colormap_fixed_toggle,colormap_min,colormap_max], layout=Layout(width='500px',justify_content='flex-start'))
+        hb3=HBox([self.colormap_fixed_toggle,self.colormap_min,self.colormap_max], layout=Layout(justify_content='flex-start'))  # border='1px solid black',
+
+        substrate_vbox=VBox([hb2, hb3], layout=Layout(width='500px'))
+        #--------------------------
+        self.custom_data_toggle = Checkbox(
+                    description='Custom plot',
+                    disabled=False,
+                    value=False,
+            style = {'description_width': 'initial'},
+            layout=Layout(width='130px', )  #  border='1px solid black',)
+        #           layout=Layout(width=constWidth2),
+                )
+        self.custom_data_update_button= Button(description='Update', layout=Layout(width='120px', ))  #,style = {'description_width': 'initial'})
+        custom_data_vbox1 = VBox([self.custom_data_toggle, self.custom_data_update_button], layout=Layout(justify_content='flex-start',border='1px solid black',))  # width='330px',
+
+        self.custom_data_choice = SelectMultiple(options=['assembled_virion','susceptible','infected', 'dead'],
+                    value=['assembled_virion'],rows=3,  layout=Layout(width='160px', ))
+        custom_data_hbox = HBox([custom_data_vbox1, self.custom_data_choice])
+
+        #gui=HBox([cells_vbox, substrate_vbox, custom_data_hbox], justify_content='center')  # vs. 'flex-start   , layout=Layout(width='900px'))
+
+        #==========================================================================
+
+        # ------- "observe" functionality (callbacks)
         self.max_frames.observe(self.update_max_frames)
 
         # self.field_min_max = {'dummy': [0., 1., False]}
         # NOTE: manually setting these for now (vs. parsing them out of data/initial.xml)
-        self.field_min_max = {'director signal':[0.,1.,False], 'cargo signal':[0.,1.,False] }
-        # hacky I know, but make a dict that's got (key,value) reversed from the dict in the Dropdown below
-        # self.field_dict = {0:'dummy'}
-        self.field_dict = {0:'director signal', 1:'cargo signal'}
 
         self.mcds_field = Dropdown(
             options={'director signal': 0, 'cargo signal':1},
@@ -155,43 +224,6 @@ class SubstrateTab(object):
 #           layout=Layout(width=constWidth2),
         )
         self.cmap_fixed_toggle.observe(self.mcds_field_cb)
-
-#         def cmap_fixed_toggle_cb(b):
-#             # self.update()
-# #            self.field_min_max = {'oxygen': [0., 30.,True], 'glucose': [0., 1.,False]}
-#             field_name = self.field_dict[self.mcds_field.value]
-#             if (self.cmap_fixed_toggle.value):  
-#                 self.field_min_max[field_name][0] = self.cmap_min.value
-#                 self.field_min_max[field_name][1] = self.cmap_max.value
-#                 self.field_min_max[field_name][2] = True
-#             else:
-#                 # self.field_min_max[field_name][0] = self.cmap_min.value
-#                 # self.field_min_max[field_name][1] = self.cmap_max.value
-#                 self.field_min_max[field_name][2] = False
-#             self.i_plot.update()
-
-        # self.cmap_fixed_toggle.observe(cmap_fixed_toggle_cb)
-
-#         self.save_min_max= Button(
-#             description='Save', #style={'description_width': 'initial'},
-#             button_style='success',  # 'success', 'info', 'warning', 'danger' or ''
-#             tooltip='Save min/max for this substrate',
-#             disabled=True,
-#            layout=Layout(width='90px')
-#         )
-
-#         def save_min_max_cb(b):
-# #            field_name = self.mcds_field.options[]
-# #            field_name = next(key for key, value in self.mcds_field.options.items() if value == self.mcds_field.value)
-#             field_name = self.field_dict[self.mcds_field.value]
-# #            print(field_name)
-# #            self.field_min_max = {'oxygen': [0., 30.], 'glucose': [0., 1.], 'H+ ions': [0., 1.], 'ECM': [0., 1.], 'NP1': [0., 1.], 'NP2': [0., 1.]}
-#             self.field_min_max[field_name][0] = self.cmap_min.value
-#             self.field_min_max[field_name][1] = self.cmap_max.value
-# #            print(self.field_min_max)
-
-#         self.save_min_max.on_click(save_min_max_cb)
-
 
         self.cmap_min = FloatText(
             description='Min',
@@ -231,51 +263,6 @@ class SubstrateTab(object):
 
         self.cmap_fixed_toggle.observe(cmap_fixed_toggle_cb)
 
-        field_cmap_row2 = HBox([self.field_cmap, self.cmap_fixed_toggle])
-
-#        field_cmap_row3 = HBox([self.save_min_max, self.cmap_min, self.cmap_max])
-        items_auto = [
-            # self.save_min_max, #layout=Layout(flex='3 1 auto', width='auto'),
-            self.cmap_min, 
-            self.cmap_max,  
-         ]
-        box_layout = Layout(display='flex',
-                    flex_flow='row',
-                    align_items='stretch',
-                    width='80%')
-        field_cmap_row3 = Box(children=items_auto, layout=box_layout)
-
-        # self.debug_str = Text(
-        #     value='debug info',
-        #     description='Debug:',
-        #     disabled=True,
-        #     layout=Layout(width='600px'),  #constWidth = '180px'
-        # )
-
-        #---------------------
-        self.cell_nucleus_toggle = Checkbox(
-            description='nuclei',
-            disabled=False,
-            value = self.show_nucleus,
-#           layout=Layout(width=constWidth2),
-        )
-        def cell_nucleus_toggle_cb(b):
-            # self.update()
-            if (self.cell_nucleus_toggle.value):  
-                self.show_nucleus = True
-            else:
-                self.show_nucleus = False
-            self.i_plot.update()
-
-        self.cell_nucleus_toggle.observe(cell_nucleus_toggle_cb)
-
-        #----
-        self.cell_edges_toggle = Checkbox(
-            description='edges',
-            disabled=False,
-            value=self.show_edge,
-#           layout=Layout(width=constWidth2),
-        )
         def cell_edges_toggle_cb(b):
             # self.update()
             if (self.cell_edges_toggle.value):  
@@ -286,31 +273,18 @@ class SubstrateTab(object):
 
         self.cell_edges_toggle.observe(cell_edges_toggle_cb)
 
-        self.cells_toggle = Checkbox(
-            description='Cells',
-            disabled=False,
-            value=True,
-#           layout=Layout(width=constWidth2),
-        )
         def cells_toggle_cb(b):
             # self.update()
             self.i_plot.update()
             if (self.cells_toggle.value):
                 self.cell_edges_toggle.disabled = False
-                self.cell_nucleus_toggle.disabled = False
+                # self.cell_nucleus_toggle.disabled = False
             else:
                 self.cell_edges_toggle.disabled = True
-                self.cell_nucleus_toggle.disabled = True
+                # self.cell_nucleus_toggle.disabled = True
 
         self.cells_toggle.observe(cells_toggle_cb)
 
-        #---------------------
-        self.substrates_toggle = Checkbox(
-            description='Substrates',
-            disabled=substrates_default_disabled_flag,
-            value=False,
-#           layout=Layout(width=constWidth2),
-        )
         def substrates_toggle_cb(b):
             if (self.substrates_toggle.value):  # seems bass-ackwards
                 self.cmap_fixed_toggle.disabled = False
@@ -327,57 +301,24 @@ class SubstrateTab(object):
 
         self.substrates_toggle.observe(substrates_toggle_cb)
 
-        self.grid_toggle = Checkbox(
-            description='grid',
-            disabled=False,
-            value=True,
-#           layout=Layout(width=constWidth2),
-        )
-        def grid_toggle_cb(b):
+        #---------------------
+        def custom_data_toggle_cb(b):
             # self.update()
-            self.i_plot.update()
+            if (self.custom_data_toggle.value):  # seems bass-ackwards
+                self.custom_data_choice.disabled = False
+            else:
+                self.custom_data_choice.disabled = True
+            # self.i_plot.update()
 
-        self.grid_toggle.observe(grid_toggle_cb)
+        self.custom_data_toggle.observe(custom_data_toggle_cb)
 
-#        field_cmap_row3 = Box([self.save_min_max, self.cmap_min, self.cmap_max])
+        self.custom_data_update_button.on_click(self.update_custom_data)
 
-        # mcds_tab = widgets.VBox([mcds_dir, mcds_plot, mcds_play], layout=tab_layout)
-        # mcds_params = VBox([self.mcds_field, field_cmap_row2, field_cmap_row3, self.max_frames])  # mcds_dir
-#        mcds_params = VBox([self.mcds_field, field_cmap_row2, field_cmap_row3,])  # mcds_dir
 
-#        self.tab = HBox([mcds_params, self.mcds_plot], layout=tab_layout)
-
+        #---------------------
         help_label = Label('select slider: drag or left/right arrows')
-        # row1 = Box([help_label, Box( [self.max_frames, self.mcds_field, self.field_cmap], layout=Layout(border='0px solid black',
-        row1a = Box( [self.max_frames, self.mcds_field, self.field_cmap], layout=Layout(border='1px solid black',
-                            width='50%',
-                            height='',
-                            align_items='stretch',
-                            flex_direction='row',
-                            display='flex')) 
-        row1b = Box( [self.cells_toggle, self.cell_nucleus_toggle, self.cell_edges_toggle], layout=Layout(border='1px solid black',
-                            width='50%',
-                            height='',
-                            align_items='stretch',
-                            flex_direction='row',
-                            display='flex')) 
-        row1 = HBox( [row1a, Label('.....'), row1b])
 
-        row2a = Box([self.cmap_fixed_toggle, self.cmap_min, self.cmap_max], layout=Layout(border='1px solid black',
-                            width='50%',
-                            height='',
-                            align_items='stretch',
-                            flex_direction='row',
-                            display='flex'))
-        # row2b = Box( [self.substrates_toggle, self.grid_toggle], layout=Layout(border='1px solid black',
-        row2b = Box( [self.substrates_toggle, ], layout=Layout(border='1px solid black',
-                            width='50%',
-                            height='',
-                            align_items='stretch',
-                            flex_direction='row',
-                            display='flex')) 
-        # row2 = HBox( [row2a, self.substrates_toggle, self.grid_toggle])
-        row2 = HBox( [row2a, Label('.....'), row2b])
+        controls_box = HBox([cells_vbox, substrate_vbox, custom_data_hbox], justify_content='center')  # vs. 'flex-start   , layout=Layout(width='900px'))
 
         if (hublib_flag):
             self.download_button = Download('mcds.zip', style='warning', icon='cloud-download', 
@@ -388,12 +329,13 @@ class SubstrateTab(object):
             download_row = HBox([self.download_button.w, self.download_svg_button.w, Label("Download all cell plots (browser must allow pop-ups).")])
 
             # box_layout = Layout(border='0px solid')
-            controls_box = VBox([row1, row2])  # ,width='50%', layout=box_layout)
+            # controls_box = VBox([row1, row2])  # ,width='50%', layout=box_layout)
+            # controls_box = HBox([cells_vbox, substrate_vbox, custom_data_hbox], justify_content='center')  # vs. 'flex-start   , layout=Layout(width='900px'))
             self.tab = VBox([controls_box, self.i_plot, download_row])
-            # self.tab = VBox([controls_box, self.debug_str, self.i_plot, download_row])
         else:
             # self.tab = VBox([row1, row2])
-            self.tab = VBox([row1, row2, self.i_plot])
+            # self.tab = VBox([row1, row2, self.i_plot])
+            self.tab = VBox([controls_box, self.i_plot])
 
     #---------------------------------------------------
     def update_dropdown_fields(self, data_dir):
@@ -473,16 +415,17 @@ class SubstrateTab(object):
 
         if (self.x_range > self.y_range):  
             ratio = self.y_range / self.x_range
-            self.figsize_width_substrate = 15.0  # allow extra for colormap
-            self.figsize_height_substrate = 12.5 * ratio
-            self.figsize_width_svg = 12.0
-            self.figsize_height_svg = 12.0 * ratio
+            self.figsize_width_substrate = self.width_substrate  # allow extra for colormap
+            self.figsize_height_substrate = self.height_substrate * ratio
+            self.figsize_width_svg = self.width_svg
+            self.figsize_height_svg = self.height_svg * ratio
         else:   # x < y
             ratio = self.x_range / self.y_range
-            self.figsize_width_substrate = 15.0 * ratio 
-            self.figsize_height_substrate = 12.5
-            self.figsize_width_svg = 12.0 * ratio
-            self.figsize_height_svg = 12.0 
+            self.figsize_width_substrate = self.width_substrate * ratio 
+            self.figsize_height_substrate = self.height_substrate
+            self.figsize_width_svg = self.width_svg * ratio
+            self.figsize_height_svg = self.height_svg
+        print('update_params():  self.figsize_width_svg= ',self.figsize_width_svg)
 
         self.svg_flag = config_tab.toggle_svg.value
         self.substrates_flag = config_tab.toggle_mcds.value
@@ -575,8 +518,6 @@ class SubstrateTab(object):
         field_name = self.field_dict[self.mcds_field.value]
         # print('mcds_field_changed_cb: field_name='+ field_name)
         # print(self.field_min_max[field_name])
-        # self.debug_str.value = 'mcds_field_changed_cb: '+ field_name  + str(self.field_min_max[field_name])
-        # self.debug_str.value = 'cb1: '+ str(self.field_min_max)
 
         # BEWARE of these triggering the mcds_field_cb() callback! Hence, the "skip_cb"
         self.skip_cb = True
@@ -601,19 +542,104 @@ class SubstrateTab(object):
         self.field_min_max[field_name][0] = self.cmap_min.value 
         self.field_min_max[field_name][1] = self.cmap_max.value
         self.field_min_max[field_name][2] = self.cmap_fixed_toggle.value
-        # print(self.field_min_max[field_name])
-        # self.debug_str.value = 'mcds_field_cb: ' + field_name + str(self.field_min_max[field_name])
-        # self.debug_str.value = 'cb2: '+ str(self.field_min_max)
-        # print('--- cb2: '+ str(self.field_min_max))  #rwh2
-        # self.cmap_fixed_toggle.value = self.field_min_max[field_name][2]
-
-        # field_name = self.mcds_field.options[self.mcds_field.value]
-        # self.cmap_min.value = self.field_min_max[field_name][0]  # oxygen, etc
-        # self.cmap_max.value = self.field_min_max[field_name][1]  # oxygen, etc
 
 #        self.field_index = self.mcds_field.value + 4
 #        print('field_index=',self.field_index)
         self.i_plot.update()
+
+    #------------------------------------------------------------
+    def update_custom_data(self,b):
+        print('----- update_custom_data')
+        self.plot_cell_custom_data()
+
+    #------------------------------------------------------------
+    def plot_cell_custom_data(self):
+        print('----- plot_cell_custom_data()')
+        x = np.linspace(0, 2*np.pi, 400)
+        y = np.sin(x**2)
+        # self.i_plot.update()
+        self.ax1.plot(x, y)
+
+    #------------------------------------------------------------
+    # def plot2D_custom_data(self, frame):
+    def plot_cell_custom_data_0(self, xname, yname_list, t):
+        # global current_idx, axes_max
+        global current_frame
+        # current_frame = frame
+        # fname = "snapshot%08d.svg" % frame
+        # full_fname = os.path.join(self.output_dir, fname)
+        # print('plot_cell_custom_data: self.output_dir=',self.output_dir)
+
+        cwd = os.getcwd()
+        # print('plot_cell_custom_data: cwd=',cwd)
+        # if not 'tmpdir' in cwd:
+        tdir = os.path.abspath('tmpdir')
+        os.chdir(tdir)
+
+        xml_files = glob.glob('output*.xml')
+        # xml_files = glob.glob(os.path.join('tmpdir', 'output*.xml'))
+        xml_files.sort()
+        # print('plot_cell_custom_data: xml_files[0]=',xml_files[0])
+        os.chdir(cwd)
+
+        ds_count = len(xml_files)
+        # print('plot_cell_custom_data: ds_count=',ds_count)
+        # mcds = [pyMCDS(xml_files[i], '.') for i in range(ds_count)]
+        mcds = [pyMCDS(xml_files[i], 'tmpdir') for i in range(ds_count)]
+        # print('plot_cell_custom_data: mcds[0]=',mcds[0])
+
+        # def cell_data_plot(xname, yname_list, t):
+        tname = "time"
+        discrete_cells_names = ['virion', 'assembled_virion']
+        tval = np.linspace(0, mcds[-1].get_time(), len(xml_files))
+        # return
+
+        if xname == tname:
+            xval = tval
+        elif xname in discrete_cells_names:
+            xval = np.array([mcds[i].data['discrete_cells'][xname].sum() for i in range(ds_count)])
+        else:
+            if xname == 'susceptible_cells':
+                xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
+                + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
+            elif xname == 'infected_cells':
+                xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)]) \
+                + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
+            elif xname == 'dead_cells':
+                xval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
+                + np.array([(mcds[i].data['discrete_cells']['cycle_model'] >= 6).sum() for i in range(ds_count)])
+
+        for yname in yname_list:
+            if yname in discrete_cells_names:
+                yval = np.array([mcds[i].data['discrete_cells'][yname].sum() for i in range(ds_count)])
+            else:
+                if yname == 'susceptible_cells':
+                    yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
+                    + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
+                elif yname == 'infected_cells':
+                    yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)])
+                    + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
+                elif yname == 'dead_cells':
+                    yval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
+                    + np.array([(mcds[i].data['discrete_cells']['cycle_model'] >= 6).sum() for i in range(ds_count)])
+            p = self.ax1.plot(xval, yval, label=yname)
+            # print('xval=',xval)  # [   0.   60.  120. ...
+            # print('yval=',yval)  # [2793 2793 2793 ...
+            # print('t=',t)
+            if (t >= 0):
+                self.ax1.plot(xval[t], yval[t], p[-1].get_color(), marker='o')
+            # self.ax1.gca().spines['top'].set_visible(False)
+            # self.ax1.gca().spines['right'].set_visible(False)
+            # self.ax1.margins(0)
+
+        if xname == tname:
+            self.ax1.set_xlabel('time (min)')
+        else:
+            self.ax1.set_xlabel('total ' * (xname != tname) + xname)
+        self.ax1.set_ylabel('total ' + (yname_list[0] if len(yname_list) == 1 else ', '.join(yname_list)))
+        # self.ax1.set_legend()
+        # self.ax1.tight_layout()
+        # self.ax1.show()
 
 
     #---------------------------------------------------------------------------
@@ -682,12 +708,15 @@ class SubstrateTab(object):
             collection.set_array(c)
             collection.set_clim(vmin, vmax)
 
-        ax = plt.gca()
-        ax.add_collection(collection)
-        ax.autoscale_view()
+        # ax = plt.gca()
+        # ax.add_collection(collection)
+        # ax.autoscale_view()
+        self.ax0.add_collection(collection)
+        self.ax0.autoscale_view()
         # plt.draw_if_interactive()
         if c is not None:
-            plt.sci(collection)
+            # plt.sci(collection)
+            self.ax0.sci(collection)
         # return collection
 
     #------------------------------------------------------------
@@ -830,10 +859,13 @@ class SubstrateTab(object):
             # hrs = int(mins/60)
             # days = int(hrs/24)
             # title_str = '%dd, %dh, %dm' % (int(days),(hrs%24), mins - (hrs*60))
-        plt.title(self.title_str)
+        # plt.title(self.title_str)
+        self.ax0.set_title(self.title_str)
 
-        plt.xlim(self.xmin, self.xmax)
-        plt.ylim(self.ymin, self.ymax)
+        # plt.xlim(self.xmin, self.xmax)
+        # plt.ylim(self.ymin, self.ymax)
+        self.ax0.set_xlim(self.xmin, self.xmax)
+        self.ax0.set_ylim(self.ymin, self.ymax)
 
         #   plt.xlim(axes_min,axes_max)
         #   plt.ylim(axes_min,axes_max)
@@ -851,10 +883,10 @@ class SubstrateTab(object):
         #   ax.ylim(axes_min,axes_max)
 
         # convert radii to radii in pixels
-        # ax2 = self.fig.gca()
+        # ax1 = self.fig.gca()
         # N = len(xvals)
-        # rr_pix = (ax2.transData.transform(np.vstack([rvals, rvals]).T) -
-        #             ax2.transData.transform(np.vstack([np.zeros(N), np.zeros(N)]).T))
+        # rr_pix = (ax1.transData.transform(np.vstack([rvals, rvals]).T) -
+        #             ax1.transData.transform(np.vstack([np.zeros(N), np.zeros(N)]).T))
         # rpix, _ = rr_pix.T
 
         # markers_size = (144. * rpix / self.fig.dpi)**2   # = (2*rpix / fig.dpi * 72)**2
@@ -874,23 +906,23 @@ class SubstrateTab(object):
             # plt.scatter(xvals,yvals, s=markers_size, c=rgbs)
             self.circles(xvals,yvals, s=rvals, color=rgbs)
 
+        # x = np.linspace(0, 2*np.pi, 100)
+        # y = np.sin(x**2)
+        # self.i_plot.update()
+        # self.ax1.plot(x, y)
+        self.plot_cell_custom_data_0("time", ["assembled_virion"], 20)
+
         # if (self.show_tracks):
         #     for key in self.trackd.keys():
         #         xtracks = self.trackd[key][:,0]
         #         ytracks = self.trackd[key][:,1]
         #         plt.plot(xtracks[0:frame],ytracks[0:frame],  linewidth=5)
 
-        # plt.xlim(self.axes_min, self.axes_max)
-        # plt.ylim(self.axes_min, self.axes_max)
-        #   ax.grid(False)
-#        axx.set_title(title_str)
-        # plt.title(title_str)
 
     #---------------------------------------------------------------------------
     # assume "frame" is cell frame #, unless Cells is togggled off, then it's the substrate frame #
     # def plot_substrate(self, frame, grid):
     def plot_substrate(self, frame):
-        # global current_idx, axes_max, gFileId, field_index
 
         # print("plot_substrate(): frame*self.substrate_delta_t  = ",frame*self.substrate_delta_t)
         # print("plot_substrate(): frame*self.svg_delta_t  = ",frame*self.svg_delta_t)
@@ -907,34 +939,16 @@ class SubstrateTab(object):
         # Assume: # .svg files >= # substrate files
 #        if (self.cells_toggle.value):
 
-        # if (self.substrates_toggle.value and frame*self.substrate_delta_t <= self.svg_frame*self.svg_delta_t):
-        # if (self.substrates_toggle.value and (frame % self.modulo == 0)):
         if (self.substrates_toggle.value):
-            # self.fig = plt.figure(figsize=(14, 15.6))
-            # self.fig = plt.figure(figsize=(15.0, 12.5))
-            self.fig = plt.figure(figsize=(self.figsize_width_substrate, self.figsize_height_substrate))
+            # maybe only show 2nd plot if self.custom_data_toggle is True
+            self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(30, 12))
 
-            # rwh - funky way to figure out substrate frame for pc4cancerbots (due to user-defined "save_interval*")
-            # self.cell_time_mins 
-            # self.substrate_frame = int(frame / self.modulo)
+
             if (self.customized_output_freq and (frame > self.max_svg_frame_pre_therapy)):
-                # max_svg_frame_pre_therapy = int(self.therapy_activation_time/self.svg_delta_t)
-                # max_substrate_frame_pre_therapy = int(self.therapy_activation_time/self.substrate_delta_t)
                 self.substrate_frame = self.max_substrate_frame_pre_therapy + (frame - self.max_svg_frame_pre_therapy)
             else:
                 self.substrate_frame = int(frame / self.modulo)
 
-            # print("plot_substrate(): self.substrate_frame=",self.substrate_frame)        
-
-            # if (self.substrate_frame > (self.num_substrates-1)):
-                # self.substrate_frame = self.num_substrates-1
-
-            # print('self.substrate_frame = ',self.substrate_frame)
-            # if (self.cells_toggle.value):
-            #     self.modulo = int((self.num_svgs - 1) / (self.num_substrates - 1))
-            #     self.substrate_frame = frame % self.modulo
-            # else:
-            #     self.substrate_frame = frame 
             fname = "output%08d_microenvironment0.mat" % self.substrate_frame
             xml_fname = "output%08d.xml" % self.substrate_frame
             # fullname = output_dir_str + fname
@@ -961,55 +975,10 @@ class SubstrateTab(object):
             self.title_str = 'substrate: %dd, %dh, %dm' % (int(days),(hrs%24), mins - (hrs*60))
             # self.title_str = 'substrate: %dm' % (mins )   # rwh
 
-
             info_dict = {}
-    #        scipy.io.loadmat(fullname, info_dict)
             scipy.io.loadmat(full_fname, info_dict)
             M = info_dict['multiscale_microenvironment']
-            #     global_field_index = int(mcds_field.value)
-            #     print('plot_substrate: field_index =',field_index)
             f = M[self.field_index, :]   # 4=tumor cells field, 5=blood vessel density, 6=growth substrate
-            # plt.clf()
-            # my_plot = plt.imshow(f.reshape(400,400), cmap='jet', extent=[0,20, 0,20])
-        
-            # self.fig = plt.figure(figsize=(18.0,15))  # this strange figsize results in a ~square contour plot
-
-            # plt.subplot(grid[0:1, 0:1])
-            # main_ax = self.fig.add_subplot(grid[0:1, 0:1])  # works, but tiny upper-left region
-            #main_ax = self.fig.add_subplot(grid[0:2, 0:2])
-            # main_ax = self.fig.add_subplot(grid[0:, 0:2])
-            #main_ax = self.fig.add_subplot(grid[:-1, 0:])   # nrows, ncols
-            #main_ax = self.fig.add_subplot(grid[0:, 0:])   # nrows, ncols
-            #main_ax = self.fig.add_subplot(grid[0:4, 0:])   # nrows, ncols
-
-
-            # main_ax = self.fig.add_subplot(grid[0:3, 0:])   # nrows, ncols
-            # main_ax = self.fig.add_subplot(111)   # nrows, ncols
-
-
-            # plt.rc('font', size=10)  # TODO: does this affect the Cell plots fonts too? YES. Not what we want.
-
-            #     fig.set_tight_layout(True)
-            #     ax = plt.axes([0, 0.05, 0.9, 0.9 ]) #left, bottom, width, height
-            #     ax = plt.axes([0, 0.0, 1, 1 ])
-            #     cmap = plt.cm.viridis # Blues, YlOrBr, ...
-            #     im = ax.imshow(f.reshape(100,100), interpolation='nearest', cmap=cmap, extent=[0,20, 0,20])
-            #     ax.grid(False)
-
-            # print("substrates.py: ------- numx, numy = ", self.numx, self.numy )
-            # if (self.numx == 0):   # need to parse vals from the config.xml
-            #     # print("--- plot_substrate(): full_fname=",full_fname)
-            #     fname = os.path.join(self.output_dir, "config.xml")
-            #     tree = ET.parse(fname)
-            #     xml_root = tree.getroot()
-            #     self.xmin = float(xml_root.find(".//x_min").text)
-            #     self.xmax = float(xml_root.find(".//x_max").text)
-            #     dx = float(xml_root.find(".//dx").text)
-            #     self.ymin = float(xml_root.find(".//y_min").text)
-            #     self.ymax = float(xml_root.find(".//y_max").text)
-            #     dy = float(xml_root.find(".//dy").text)
-            #     self.numx =  math.ceil( (self.xmax - self.xmin) / dx)
-            #     self.numy =  math.ceil( (self.ymax - self.ymin) / dy)
 
             try:
                 xgrid = M[0, :].reshape(self.numy, self.numx)
@@ -1025,87 +994,39 @@ class SubstrateTab(object):
             contour_ok = True
             if (self.cmap_fixed_toggle.value):
                 try:
-                    # substrate_plot = main_ax.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy, self.numx), levels=levels, extend='both', cmap=self.field_cmap.value, fontsize=self.fontsize)
-                    substrate_plot = plt.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy, self.numx), levels=levels, extend='both', cmap=self.field_cmap.value, fontsize=self.fontsize)
+                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy, self.numx), levels=levels, extend='both', cmap=self.field_cmap.value, fontsize=self.fontsize)
                 except:
                     contour_ok = False
                     # print('got error on contourf 1.')
             else:    
                 try:
-                    # substrate_plot = main_ax.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy,self.numx), num_contours, cmap=self.field_cmap.value)
-                    substrate_plot = plt.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy,self.numx), num_contours, cmap=self.field_cmap.value)
+                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy,self.numx), num_contours, cmap=self.field_cmap.value)
                 except:
                     contour_ok = False
                     # print('got error on contourf 2.')
 
             if (contour_ok):
-                # main_ax.set_title(self.title_str, fontsize=self.fontsize)
-                plt.title(self.title_str, fontsize=self.fontsize)
-                # main_ax.tick_params(labelsize=self.fontsize)
-            # cbar = plt.colorbar(my_plot)
-                # cbar = self.fig.colorbar(substrate_plot, ax=main_ax)
-                cbar = self.fig.colorbar(substrate_plot)
+                self.ax0.set_title(self.title_str, fontsize=self.fontsize)
+                cbar = self.fig.colorbar(substrate_plot, ax=self.ax0)
                 cbar.ax.tick_params(labelsize=self.fontsize)
-                # cbar = main_ax.colorbar(my_plot)
-                # cbar.ax.tick_params(labelsize=self.fontsize)
-            # axes_min = 0
-            # axes_max = 2000
 
-            # main_ax.set_xlim([self.xmin, self.xmax])
-            # main_ax.set_ylim([self.ymin, self.ymax])
-            plt.xlim(self.xmin, self.xmax)
-            plt.ylim(self.ymin, self.ymax)
-
-            # if (frame == 0):  # maybe allow substrate grid display later
-            #     xs = np.linspace(self.xmin,self.xmax,self.numx)
-            #     ys = np.linspace(self.ymin,self.ymax,self.numy)
-            #     hlines = np.column_stack(np.broadcast_arrays(xs[0], ys, xs[-1], ys))
-            #     vlines = np.column_stack(np.broadcast_arrays(xs, ys[0], xs, ys[-1]))
-            #     grid_lines = np.concatenate([hlines, vlines]).reshape(-1, 2, 2)
-            #     line_collection = LineCollection(grid_lines, color="gray", linewidths=0.5)
-            #     # ax = main_ax.gca()
-            #     main_ax.add_collection(line_collection)
-            #     # ax.set_xlim(xs[0], xs[-1])
-            #     # ax.set_ylim(ys[0], ys[-1])
-
+            self.ax0.set_xlim(self.xmin, self.xmax)
+            self.ax0.set_ylim(self.ymin, self.ymax)
 
         # Now plot the cells (possibly on top of the substrate)
         if (self.cells_toggle.value):
             if (not self.substrates_toggle.value):
-                # self.fig = plt.figure(figsize=(12, 12))
-                self.fig = plt.figure(figsize=(self.figsize_width_svg, self.figsize_height_svg))
-            # self.plot_svg(frame)
+                # maybe only show 2nd plot if self.custom_data_toggle is True
+                # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(self.figsize_width_svg*2, self.figsize_height_svg))
+                # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(24, 12))
+                self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(20, 10))
+
             self.svg_frame = frame
             # print('plot_svg with frame=',self.svg_frame)
             self.plot_svg(self.svg_frame)
 
-        # plt.subplot(grid[2, 0])
-        # oxy_ax = self.fig.add_subplot(grid[2:, 0:1])
-        #oxy_ax = self.fig.add_subplot(grid[:2, 2:])
 
-        #oxy_ax = self.fig.add_subplot(grid[:-1, 0:2])  # nrows, ncols
-        #oxy_ax = self.fig.add_subplot(grid[2:3, 0:1])  # nrows, ncols
-
-        # oxy_ax = self.fig.add_subplot(grid[4:4, 0:1])  # invalid
-#        main_ax = self.fig.add_subplot(grid[0:1, 0:1])
-
-        # experiment with small plot of oxygen (or whatever)
-        # oxy_ax = self.fig.add_subplot(grid[3:4, 0:1])  # nrows, ncols
-        # x = np.linspace(0, 500)
-        # oxy_ax.plot(x, 300*np.sin(x))
-
-    #---------------------------------------------------------------------------
-    # def plot_plots(self, frame):
-    #     # if (self.first_time):
-    #     #     self.svg_delta_t = 1
-    #     #     self.substrate_delta_t = 1
-    #     #     self.first_time = False
-
-    #     if (self.substrates_toggle.value):
-    #         self.fig = plt.figure(figsize=(14, 15.6))
-    #     else:  # only cells being displayed (maybe)
-    #         self.fig = plt.figure(figsize=(12, 12))
-    #     # grid = plt.GridSpec(4, 3, wspace=0.10, hspace=0.2)   # (nrows, ncols)
-    #     # self.plot_substrate(frame, grid)
-    #     self.plot_substrate(frame)
-    #     # self.plot_svg(frame)
+            if not self.custom_data_plotted:
+                self.plot_cell_custom_data()
+                # self.plot_cell_custom_data('time', ['susceptible_cells', 'infected_cells', 'dead_cells'], 20)
+                self.custom_data_plotted = True
