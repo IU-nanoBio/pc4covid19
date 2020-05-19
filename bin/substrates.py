@@ -104,6 +104,13 @@ class SubstrateTab(object):
         self.numx = 0
         self.numy = 0
 
+        # ------- custom data for cells ----------
+        self.xval = np.empty([1])
+        self.yval = np.empty([1])
+        self.tname = "time"
+        self.yname = 'Y'
+
+
         self.title_str = ''
 
         tab_height = '600px'
@@ -116,7 +123,8 @@ class SubstrateTab(object):
         max_frames = 1   
         # self.mcds_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
         # self.i_plot = interactive(self.plot_plots, frame=(0, max_frames), continuous_update=False)  
-        self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
+        # self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
+        self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=True)  
 
         # "plot_size" controls the size of the tab height, not the plot (rf. figsize for that)
         # NOTE: the Substrates Plot tab has an extra row of widgets at the top of it (cf. Cell Plots tab)
@@ -142,7 +150,8 @@ class SubstrateTab(object):
                             align_items='center',
                             width='25%', )  #border='1px solid black')
         hb1=HBox([self.cells_toggle,self.cell_edges_toggle ])  # layout=layout1)
-        cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='350px',border='1px solid black',))
+        # cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='350px',border='1px solid black',))
+        cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='320px'))
         #--------------------------
         self.substrates_toggle=Checkbox(description='Substrates', style = {'description_width': 'initial'})
 
@@ -181,8 +190,10 @@ class SubstrateTab(object):
             layout=Layout(width='130px', )  #  border='1px solid black',)
         #           layout=Layout(width=constWidth2),
                 )
-        self.custom_data_update_button= Button(description='Update', layout=Layout(width='120px', ))  #,style = {'description_width': 'initial'})
-        custom_data_vbox1 = VBox([self.custom_data_toggle, self.custom_data_update_button], layout=Layout(justify_content='flex-start',border='1px solid black',))  # width='330px',
+        self.custom_data_update_button= Button(description='Update', )  # layout=Layout(width='120px',) ,style = {'description_width': 'initial'})
+        self.custom_data_update_button.style.button_color = 'lightgreen'
+
+        custom_data_vbox1 = VBox([self.custom_data_toggle, self.custom_data_update_button], layout=Layout(justify_content='center',border='1px solid black',))  # width='330px',
 
         self.custom_data_choice = SelectMultiple(options=['assembled_virion','susceptible','infected', 'dead'],
                     value=['assembled_virion'],rows=3,  layout=Layout(width='160px', ))
@@ -310,7 +321,7 @@ class SubstrateTab(object):
                 self.custom_data_choice.disabled = True
             # self.i_plot.update()
 
-        self.custom_data_toggle.observe(custom_data_toggle_cb)
+        # self.custom_data_toggle.observe(custom_data_toggle_cb)
 
         self.custom_data_update_button.on_click(self.update_custom_data)
 
@@ -550,25 +561,10 @@ class SubstrateTab(object):
     #------------------------------------------------------------
     def update_custom_data(self,b):
         print('----- update_custom_data')
-        self.plot_cell_custom_data()
-
-    #------------------------------------------------------------
-    def plot_cell_custom_data(self):
-        print('----- plot_cell_custom_data()')
-        x = np.linspace(0, 2*np.pi, 400)
-        y = np.sin(x**2)
+        # self.plot_cell_custom_data()
+        # self.plot_cell_custom_data_0("time", ["assembled_virion"], 20)
+        # self.plot_cell_custom_data_0("time", ["assembled_virion"], -1)
         # self.i_plot.update()
-        self.ax1.plot(x, y)
-
-    #------------------------------------------------------------
-    # def plot2D_custom_data(self, frame):
-    def plot_cell_custom_data_0(self, xname, yname_list, t):
-        # global current_idx, axes_max
-        global current_frame
-        # current_frame = frame
-        # fname = "snapshot%08d.svg" % frame
-        # full_fname = os.path.join(self.output_dir, fname)
-        # print('plot_cell_custom_data: self.output_dir=',self.output_dir)
 
         cwd = os.getcwd()
         # print('plot_cell_custom_data: cwd=',cwd)
@@ -589,54 +585,79 @@ class SubstrateTab(object):
         # print('plot_cell_custom_data: mcds[0]=',mcds[0])
 
         # def cell_data_plot(xname, yname_list, t):
-        tname = "time"
         discrete_cells_names = ['virion', 'assembled_virion']
         tval = np.linspace(0, mcds[-1].get_time(), len(xml_files))
         # return
 
-        if xname == tname:
-            xval = tval
+        xname = 'time'
+        if xname == self.tname:
+            self.xval = tval
         elif xname in discrete_cells_names:
-            xval = np.array([mcds[i].data['discrete_cells'][xname].sum() for i in range(ds_count)])
+            self.xval = np.array([mcds[i].data['discrete_cells'][xname].sum() for i in range(ds_count)])
         else:
             if xname == 'susceptible_cells':
-                xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
+                self.xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
                 + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
             elif xname == 'infected_cells':
-                xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)]) \
+                self.xval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)]) \
                 + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
             elif xname == 'dead_cells':
-                xval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
+                self.xval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
                 + np.array([(mcds[i].data['discrete_cells']['cycle_model'] >= 6).sum() for i in range(ds_count)])
 
-        for yname in yname_list:
-            if yname in discrete_cells_names:
-                yval = np.array([mcds[i].data['discrete_cells'][yname].sum() for i in range(ds_count)])
+        self.yname = 'assembled_virion'
+        yname_list = ['assembled_virion']
+        for self.yname in yname_list:
+            if self.yname in discrete_cells_names:
+                self.yval = np.array([mcds[i].data['discrete_cells'][self.yname].sum() for i in range(ds_count)])
             else:
-                if yname == 'susceptible_cells':
-                    yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
+                if self.yname == 'susceptible_cells':
+                    self.yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] <= 1).sum() for i in range(ds_count)])
                     + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
-                elif yname == 'infected_cells':
-                    yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)])
+                elif self.yname == 'infected_cells':
+                    self.yval = np.array([(mcds[i].data['discrete_cells']['assembled_virion'] > 1).sum() for i in range(ds_count)])
                     + np.array([(mcds[i].data['discrete_cells']['cycle_model'] < 6).sum() for i in range(ds_count)])
-                elif yname == 'dead_cells':
-                    yval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
+                elif self.yname == 'dead_cells':
+                    self.yval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
                     + np.array([(mcds[i].data['discrete_cells']['cycle_model'] >= 6).sum() for i in range(ds_count)])
-            p = self.ax1.plot(xval, yval, label=yname)
-            # print('xval=',xval)  # [   0.   60.  120. ...
-            # print('yval=',yval)  # [2793 2793 2793 ...
-            # print('t=',t)
-            if (t >= 0):
-                self.ax1.plot(xval[t], yval[t], p[-1].get_color(), marker='o')
+
+    #------------------------------------------------------------
+    # def plot_cell_custom_data_dummy(self):
+    #     print('----- plot_cell_custom_data()')
+    #     x = np.linspace(0, 2*np.pi, 400)
+    #     y = np.sin(x**2)
+    #     # self.i_plot.update()
+    #     self.ax1.plot(x, y)
+
+    #------------------------------------------------------------
+    # def plot2D_custom_data(self, frame):
+    def plot_cell_custom_data(self, xname, yname_list, t):
+        # global current_idx, axes_max
+        global current_frame
+        # current_frame = frame
+        # fname = "snapshot%08d.svg" % frame
+        # full_fname = os.path.join(self.output_dir, fname)
+        # print('plot_cell_custom_data: self.output_dir=',self.output_dir)
+
+        p = self.ax1.plot(self.xval, self.yval, label=self.yname)
+        # print('xval=',xval)  # [   0.   60.  120. ...
+        # print('yval=',yval)  # [2793 2793 2793 ...
+        # print('t=',t)
+
+        if (t >= 0):
+            self.ax1.plot(self.xval[t], self.yval[t], p[-1].get_color(), marker='o')
+
             # self.ax1.gca().spines['top'].set_visible(False)
             # self.ax1.gca().spines['right'].set_visible(False)
             # self.ax1.margins(0)
 
-        if xname == tname:
+        if xname == self.tname:
             self.ax1.set_xlabel('time (min)')
         else:
-            self.ax1.set_xlabel('total ' * (xname != tname) + xname)
+            self.ax1.set_xlabel('total ' * (xname != self.tname) + xname)
         self.ax1.set_ylabel('total ' + (yname_list[0] if len(yname_list) == 1 else ', '.join(yname_list)))
+
+        # p = self.ax1.plot(xval, yval, label=yname)
         # self.ax1.set_legend()
         # self.ax1.tight_layout()
         # self.ax1.show()
@@ -910,7 +931,7 @@ class SubstrateTab(object):
         # y = np.sin(x**2)
         # self.i_plot.update()
         # self.ax1.plot(x, y)
-        self.plot_cell_custom_data_0("time", ["assembled_virion"], 20)
+        # self.plot_cell_custom_data_0("time", ["assembled_virion"], 20)
 
         # if (self.show_tracks):
         #     for key in self.trackd.keys():
@@ -1025,8 +1046,11 @@ class SubstrateTab(object):
             # print('plot_svg with frame=',self.svg_frame)
             self.plot_svg(self.svg_frame)
 
+        if (self.custom_data_toggle.value):
+            # print('custom_data_toggle.value =',self.custom_data_toggle.value )
+            self.plot_cell_custom_data("time", ["assembled_virion"], -1)
 
-            if not self.custom_data_plotted:
-                self.plot_cell_custom_data()
-                # self.plot_cell_custom_data('time', ['susceptible_cells', 'infected_cells', 'dead_cells'], 20)
-                self.custom_data_plotted = True
+            # if not self.custom_data_plotted:
+            #     # self.plot_cell_custom_data()
+            #     # self.plot_cell_custom_data('time', ['susceptible_cells', 'infected_cells', 'dead_cells'], 20)
+            #     self.custom_data_plotted = True
