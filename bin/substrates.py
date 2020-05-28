@@ -22,6 +22,8 @@ import platform
 import zipfile
 from debug import debug_view 
 import warnings
+import traceback
+import sys
 
 hublib_flag = True
 if platform.system() != 'Windows':
@@ -40,21 +42,32 @@ class SubstrateTab(object):
 
     def __init__(self):
         
+        self.tb_count = 0
+
         self.output_dir = '.'
         # self.output_dir = 'tmpdir'
 
         # These are recomputed below 
-        # self.figsize_width_substrate = 15.0  # allow extra for colormap
-        # self.figsize_height_substrate = 12.5
+        # basic_length = 12.5
+        basic_length = 12.0
+        self.figsize_width_substrate = 15.0  # allow extra for colormap
+        self.figsize_height_substrate = basic_length
 
-        foo=12.0
-        self.width_substrate = foo  # allow extra for colormap
-        self.height_substrate = foo
+        self.figsize_width_2Dplot = basic_length
+        self.figsize_height_2Dplot = basic_length
 
-        self.figsize_width_svg = foo
-        self.figsize_height_svg = foo
-        self.width_svg = foo
-        self.height_svg = foo
+        # self.width_substrate = basic_length  # allow extra for colormap
+        # self.height_substrate = basic_length
+
+        self.figsize_width_svg = basic_length
+        self.figsize_height_svg = basic_length
+        # self.width_svg = basic_length
+        # self.height_svg = basic_length
+
+        self.figsize_width_substrate = 15.0  # allow extra for colormap
+        self.figsize_height_substrate = 12.0
+        self.figsize_width_svg = 12.0
+        self.figsize_height_svg = 12.0
 
         self.ax0 = None
         self.ax1 = None
@@ -96,9 +109,9 @@ class SubstrateTab(object):
 
         # initial value
         self.field_index = 4
-        # self.field_index = self.mcds_field.value + 4
+        # self.field_index = self.substrate_choice.value + 4
 
-        self.skip_cb = False
+        self.skip_cb = True
 
         # define dummy size of mesh (set in the tool's primary module)
         self.numx = 0
@@ -106,6 +119,7 @@ class SubstrateTab(object):
 
         # ------- custom data for cells ----------
         self.xval = np.empty([1])
+        print('sub, init: len(self.xval) = ',len(self.xval))
         self.yval = np.empty([1])
         self.tname = "time"
         self.yname = 'Y'
@@ -121,10 +135,14 @@ class SubstrateTab(object):
                             height=tab_height, ) #overflow_y='scroll')
 
         max_frames = 1   
+        # NOTE: The "interactive" widget contains the plot(s). Whenever any plot needs to be updated,
+        # its "update" method needs to be invoked. So, if you notice multiple, flashing 
+        # plot updates occuring, you can search for all instances of "self.i_plot.update()" and do
+        # a debug print to see where they occur.
+
         # self.mcds_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
         # self.i_plot = interactive(self.plot_plots, frame=(0, max_frames), continuous_update=False)  
-        # self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
-        self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=True)  
+        self.i_plot = interactive(self.plot_substrate, frame=(0, max_frames), continuous_update=False)  
 
         # "plot_size" controls the size of the tab height, not the plot (rf. figsize for that)
         # NOTE: the Substrates Plot tab has an extra row of widgets at the top of it (cf. Cell Plots tab)
@@ -153,17 +171,25 @@ class SubstrateTab(object):
         # cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='350px',border='1px solid black',))
         cells_vbox=VBox([self.max_frames, hb1], layout=Layout(width='320px'))
         #--------------------------
-        self.substrates_toggle=Checkbox(description='Substrates', style = {'description_width': 'initial'})
+        self.substrates_toggle = Checkbox(description='Substrates', style = {'description_width': 'initial'})
 
-        self.field_min_max = {'assembled_virion':[0.,1.,False]  }
+        # self.field_min_max = {'assembled_virion':[0.,1.,False]  }
         # hacky I know, but make a dict that's got (key,value) reversed from the dict in the Dropdown below
 
         # ipywidgets 8 docs: Selection widgets no longer accept a dictionary of options. Pass a list of key-value pairs instead.
         self.field_dict = {0:'director signal', 1:'cargo signal'}
 
-        self.substrate_choice = Dropdown(options={'assembled_virion': 0},layout=Layout(width='150px'))
+        # self.substrate_choice = Dropdown(options={'assembled_virion': 0},layout=Layout(width='150px'))
+        # options will be replaced below, based on initial.xml
+        self.substrate_choice = Dropdown(
+            options={'director signal': 0, 'cargo signal':1},
+            value=0,
+            disabled = substrates_default_disabled_flag,
+            #     description='Field',
+           layout=Layout(width='150px')
+        )
         self.colormap_dd = Dropdown(options=['viridis', 'jet', 'YlOrRd'],value='YlOrRd',layout=Layout(width='200px'))
-        hb2=HBox([self.substrates_toggle,self.substrate_choice,self.colormap_dd], layout=Layout(width='350px', )) # border='1px solid black',))
+        hb2 = HBox([self.substrates_toggle,self.substrate_choice,self.colormap_dd], layout=Layout(width='350px', )) # border='1px solid black',))
 
         self.colormap_fixed_toggle = Checkbox(description='Fix',style = {'description_width': 'initial'}, layout=Layout(width='60px'))
         constWidth2 = '160px'
@@ -183,7 +209,7 @@ class SubstrateTab(object):
         substrate_vbox=VBox([hb2, hb3], layout=Layout(width='500px'))
         #--------------------------
         self.custom_data_toggle = Checkbox(
-                    description='Custom plot',
+                    description='2D plot',
                     disabled=False,
                     value=False,
             style = {'description_width': 'initial'},
@@ -209,70 +235,71 @@ class SubstrateTab(object):
         # self.field_min_max = {'dummy': [0., 1., False]}
         # NOTE: manually setting these for now (vs. parsing them out of data/initial.xml)
 
-        self.mcds_field = Dropdown(
-            options={'director signal': 0, 'cargo signal':1},
-            value=0,
-            disabled = substrates_default_disabled_flag,
-            #     description='Field',
-           layout=Layout(width=constWidth)
-        )
-        # print("substrate __init__: self.mcds_field.value=",self.mcds_field.value)
-#        self.mcds_field.observe(self.mcds_field_cb)
-        self.mcds_field.observe(self.mcds_field_changed_cb)
+        # print("substrate __init__: self.substrate_choice.value=",self.substrate_choice.value)
+#        self.substrate_choice.observe(self.mcds_field_cb)
+        # self.substrate_choice.observe(self.mcds_field_changed_cb)
+        self.substrate_choice.observe(self.substrate_field_changed_cb)
 
-        self.field_cmap = Dropdown(
+        self.field_colormap = Dropdown(
             options=['viridis', 'jet', 'YlOrRd'],
             value='YlOrRd',
             #     description='Field',
            layout=Layout(width=constWidth)
         )
+
+        # rwh2
 #        self.field_cmap.observe(self.plot_substrate)
-        self.field_cmap.observe(self.mcds_field_cb)
+        # self.field_colormap.observe(self.substrate_field_cb)
 
-        self.cmap_fixed_toggle = Checkbox(
-            description='Fix',
-            disabled=False,
-#           layout=Layout(width=constWidth2),
-        )
-        self.cmap_fixed_toggle.observe(self.mcds_field_cb)
+        # self.colormap_min.observe(self.substrate_field_cb)
+        # self.colormap_max.observe(self.substrate_field_cb)
 
-        self.cmap_min = FloatText(
-            description='Min',
-            value=0,
-            step = 0.1,
-            disabled=True,
-            layout=Layout(width=constWidth2),
-        )
-        self.cmap_min.observe(self.mcds_field_cb)
+#         self.cmap_fixed_toggle = Checkbox(
+#             description='Fix',
+#             disabled=False,
+# #           layout=Layout(width=constWidth2),
+#         )
+        # self.colormap_fixed_toggle.observe(self.mcds_field_cb)
 
-        self.cmap_max = FloatText(
-            description='Max',
-            value=38,
-            step = 0.1,
-            disabled=True,
-            layout=Layout(width=constWidth2),
-        )
-        self.cmap_max.observe(self.mcds_field_cb)
+        # self.cmap_min = FloatText(
+        #     description='Min',
+        #     value=0,
+        #     step = 0.1,
+        #     disabled=True,
+        #     layout=Layout(width=constWidth2),
+        # )
 
-        def cmap_fixed_toggle_cb(b):
-            field_name = self.field_dict[self.mcds_field.value]
+        # self.cmap_max = FloatText(
+        #     description='Max',
+        #     value=38,
+        #     step = 0.1,
+        #     disabled=True,
+        #     layout=Layout(width=constWidth2),
+        # )
+
+        def colormap_fixed_toggle_cb(b):
+            field_name = self.field_dict[self.substrate_choice.value]
             # print(self.cmap_fixed_toggle.value)
-            if (self.cmap_fixed_toggle.value):  # toggle on fixed range
-                self.cmap_min.disabled = False
-                self.cmap_max.disabled = False
-                self.field_min_max[field_name][0] = self.cmap_min.value
-                self.field_min_max[field_name][1] = self.cmap_max.value
+            if (self.colormap_fixed_toggle.value):  # toggle on fixed range
+                self.colormap_min.disabled = False
+                self.colormap_max.disabled = False
+                self.field_min_max[field_name][0] = self.colormap_min.value
+                self.field_min_max[field_name][1] = self.colormap_max.value
                 self.field_min_max[field_name][2] = True
                 # self.save_min_max.disabled = False
             else:  # toggle off fixed range
-                self.cmap_min.disabled = True
-                self.cmap_max.disabled = True
+                self.colormap_min.disabled = True
+                self.colormap_max.disabled = True
                 self.field_min_max[field_name][2] = False
                 # self.save_min_max.disabled = True
 #            self.mcds_field_cb()
-            self.i_plot.update()
 
-        self.cmap_fixed_toggle.observe(cmap_fixed_toggle_cb)
+            if not self.skip_cb:
+                print("colormap_fixed_toggle_cb():  i_plot.update")
+                self.i_plot.update()
+
+        # self.colormap_fixed_toggle.observe(colormap_fixed_toggle_cb)
+        self.colormap_fixed_toggle.observe(self.substrate_field_cb)
 
         def cell_edges_toggle_cb(b):
             # self.update()
@@ -280,51 +307,65 @@ class SubstrateTab(object):
                 self.show_edge = True
             else:
                 self.show_edge = False
+            print("cell_edges_toggle_cb():  i_plot.update")
             self.i_plot.update()
 
         self.cell_edges_toggle.observe(cell_edges_toggle_cb)
 
         def cells_toggle_cb(b):
             # self.update()
-            self.i_plot.update()
-            if (self.cells_toggle.value):
+            self.skip_cb = True
+            if self.cells_toggle.value:
                 self.cell_edges_toggle.disabled = False
                 # self.cell_nucleus_toggle.disabled = False
             else:
                 self.cell_edges_toggle.disabled = True
                 # self.cell_nucleus_toggle.disabled = True
+            self.skip_cb = False
+
+            print("cells_toggle_cb():  i_plot.update")
+            self.i_plot.update()
 
         self.cells_toggle.observe(cells_toggle_cb)
 
         def substrates_toggle_cb(b):
-            if (self.substrates_toggle.value):  # seems bass-ackwards
-                self.cmap_fixed_toggle.disabled = False
-                self.cmap_min.disabled = False
-                self.cmap_max.disabled = False
-                self.mcds_field.disabled = False
-                self.field_cmap.disabled = False
+            self.skip_cb = True
+            if self.substrates_toggle.value:  # seems bass-ackwards, but makes sense
+                self.colormap_fixed_toggle.disabled = False
+                self.colormap_min.disabled = False
+                self.colormap_max.disabled = False
+                self.substrate_choice.disabled = False
+                self.field_colormap.disabled = False
             else:
-                self.cmap_fixed_toggle.disabled = True
-                self.cmap_min.disabled = True
-                self.cmap_max.disabled = True
-                self.mcds_field.disabled = True
-                self.field_cmap.disabled = True
+                self.colormap_fixed_toggle.disabled = True
+                self.colormap_min.disabled = True
+                self.colormap_max.disabled = True
+                self.substrate_choice.disabled = True
+                self.field_colormap.disabled = True
+            self.skip_cb = False
+
+            print("substrates_toggle_cb:  i_plot.update")
+            self.i_plot.update()
 
         self.substrates_toggle.observe(substrates_toggle_cb)
 
         #---------------------
         def custom_data_toggle_cb(b):
-            # self.update()
+            # print("custom_data_toggle_cb()")
+            self.skip_cb = True
             if (self.custom_data_toggle.value):  # seems bass-ackwards
                 self.custom_data_choice.disabled = False
+                self.custom_data_update_button.disabled = False
             else:
                 self.custom_data_choice.disabled = True
-            # self.i_plot.update()
+                self.custom_data_update_button.disabled = True
+            self.skip_cb = False
 
-        # self.custom_data_toggle.observe(custom_data_toggle_cb)
+            print("custom_data_toggle_cb():  i_plot.update")
+            self.i_plot.update()
 
+        self.custom_data_toggle.observe(custom_data_toggle_cb)
         self.custom_data_update_button.on_click(self.update_custom_data)
-
 
         #---------------------
         help_label = Label('select slider: drag or left/right arrows')
@@ -342,7 +383,8 @@ class SubstrateTab(object):
             # box_layout = Layout(border='0px solid')
             # controls_box = VBox([row1, row2])  # ,width='50%', layout=box_layout)
             # controls_box = HBox([cells_vbox, substrate_vbox, custom_data_hbox], justify_content='center')  # vs. 'flex-start   , layout=Layout(width='900px'))
-            self.tab = VBox([controls_box, self.i_plot, download_row])
+
+            self.tab = VBox([controls_box, self.i_plot, download_row, debug_view])
         else:
             # self.tab = VBox([row1, row2])
             # self.tab = VBox([row1, row2, self.i_plot])
@@ -350,7 +392,7 @@ class SubstrateTab(object):
 
     #---------------------------------------------------
     def update_dropdown_fields(self, data_dir):
-        # print('update_dropdown_fields called --------')
+        print('update_dropdown_fields called --------')
         self.output_dir = data_dir
         tree = None
         try:
@@ -387,8 +429,10 @@ class SubstrateTab(object):
 #        constWidth = '180px'
         # print('options=',dropdown_options)
         # print(self.field_min_max)  # debug
-        self.mcds_field.value = 0
-        self.mcds_field.options = dropdown_options
+        self.substrate_choice.value = 0
+        self.substrate_choice.options = dropdown_options
+
+        print("----- update_dropdown_fields(): self.field_dict= ", self.field_dict) 
 #         self.mcds_field = Dropdown(
 # #            options={'oxygen': 0, 'glucose': 1},
 #             options=dropdown_options,
@@ -424,19 +468,32 @@ class SubstrateTab(object):
         self.numx =  math.ceil( (self.xmax - self.xmin) / config_tab.xdelta.value)
         self.numy =  math.ceil( (self.ymax - self.ymin) / config_tab.ydelta.value)
 
+        # if (self.x_range > self.y_range):  
+        #     ratio = self.y_range / self.x_range
+        #     self.figsize_width_substrate = self.width_substrate  # allow extra for colormap
+        #     self.figsize_height_substrate = self.height_substrate * ratio
+        #     self.figsize_width_svg = self.width_svg
+        #     self.figsize_height_svg = self.height_svg * ratio
+        # else:   # x < y
+        #     ratio = self.x_range / self.y_range
+        #     self.figsize_width_substrate = self.width_substrate * ratio 
+        #     self.figsize_height_substrate = self.height_substrate
+        #     self.figsize_width_svg = self.width_svg * ratio
+        #     self.figsize_height_svg = self.height_svg
+
         if (self.x_range > self.y_range):  
             ratio = self.y_range / self.x_range
-            self.figsize_width_substrate = self.width_substrate  # allow extra for colormap
-            self.figsize_height_substrate = self.height_substrate * ratio
-            self.figsize_width_svg = self.width_svg
-            self.figsize_height_svg = self.height_svg * ratio
+            self.figsize_width_substrate = 15.0  # allow extra for colormap
+            self.figsize_height_substrate = 12.0 * ratio
+            self.figsize_width_svg = 12.0
+            self.figsize_height_svg = 12.0 * ratio
         else:   # x < y
             ratio = self.x_range / self.y_range
-            self.figsize_width_substrate = self.width_substrate * ratio 
-            self.figsize_height_substrate = self.height_substrate
-            self.figsize_width_svg = self.width_svg * ratio
-            self.figsize_height_svg = self.height_svg
-        print('update_params():  self.figsize_width_svg= ',self.figsize_width_svg)
+            self.figsize_width_substrate = 15.0 * ratio 
+            self.figsize_height_substrate = 12.0
+            self.figsize_width_svg = 12.0 * ratio
+            self.figsize_height_svg = 12.0 
+        # print('update_params():  sub w,h= ',self.figsize_width_substrate,self.figsize_height_substrate,' , svg w,h= ',self.figsize_width_svg,self.figsize_height_svg)
 
         self.svg_flag = config_tab.toggle_svg.value
         self.substrates_flag = config_tab.toggle_mcds.value
@@ -484,7 +541,7 @@ class SubstrateTab(object):
                 self.substrate_delta_t = int(xml_root.find(".//full_data//interval").text)
                 # print("substrates: svg,substrate delta_t values=",self.svg_delta_t,self.substrate_delta_t)        
                 self.modulo = int(self.substrate_delta_t / self.svg_delta_t)
-                # print("substrates: update(): modulo=",self.modulo)        
+                # print("substrates-2: update(): modulo=",self.modulo)        
 
 
         # all_files = sorted(glob.glob(os.path.join(self.output_dir, 'output*.xml')))  # if the substrates/MCDS
@@ -520,51 +577,68 @@ class SubstrateTab(object):
         self.i_plot.children[0].max = self.max_frames.value
 
     # called if user selected different substrate in dropdown
-    def mcds_field_changed_cb(self, b):
-        # print("mcds_field_changed_cb: self.mcds_field.value=",self.mcds_field.value)
-        if (self.mcds_field.value == None):
+    # @debug_view.capture(clear_output=True)
+    def substrate_field_changed_cb(self, b):
+        if (self.substrate_choice.value == None):
             return
-        self.field_index = self.mcds_field.value + 4
 
-        field_name = self.field_dict[self.mcds_field.value]
-        # print('mcds_field_changed_cb: field_name='+ field_name)
+        self.tb_count += 1
+        if self.tb_count == 5:
+            try:
+                raise NameError('HiThere')
+            except:
+                with debug_view:
+                    # print("substrates: update rdir=", rdir)        
+                    exc_type, exc_value, exc_traceback = sys.exc_info()
+                    traceback.print_tb(exc_traceback, limit=None, file=sys.stdout)
+                # sys.exit(-1)
+
+        print('substrate_field_changed_cb: self.field_index=', self.field_index)
+        print('substrate_field_changed_cb: self.substrate_choice.value=', self.substrate_choice.value)
+        # if (self.field_index == self.substrate_choice.value + 4):
+            # return
+
+        self.field_index = self.substrate_choice.value + 4
+
+        field_name = self.field_dict[self.substrate_choice.value]
+        print('substrate_field_changed_cb: field_name='+ field_name)
         # print(self.field_min_max[field_name])
 
-        # BEWARE of these triggering the mcds_field_cb() callback! Hence, the "skip_cb"
+        # BEWARE of these triggering the substrate_field_cb() callback! Hence, the "skip_cb"
         self.skip_cb = True
-        self.cmap_min.value = self.field_min_max[field_name][0]
-        self.cmap_max.value = self.field_min_max[field_name][1]
-        self.cmap_fixed_toggle.value = bool(self.field_min_max[field_name][2])
+        self.colormap_min.value = self.field_min_max[field_name][0]
+        self.colormap_max.value = self.field_min_max[field_name][1]
+        self.colormap_fixed_toggle.value = bool(self.field_min_max[field_name][2])
         self.skip_cb = False
 
+        # if not self.skip_cb:
+        print("substrate_field_changed_cb: i_plot.update")
         self.i_plot.update()
 
     # called if user provided different min/max values for colormap, or a different colormap
-    def mcds_field_cb(self, b):
-        if self.skip_cb:
-            return
+    def substrate_field_cb(self, b):
+        # # if self.skip_cb:
+        #     return
 
-        self.field_index = self.mcds_field.value + 4
+        self.field_index = self.substrate_choice.value + 4
 
-        field_name = self.field_dict[self.mcds_field.value]
-        # print('mcds_field_cb: field_name='+ field_name)
+        field_name = self.field_dict[self.substrate_choice.value]
+        print('substrate_field_cb: field_name='+ field_name)
 
-        # print('mcds_field_cb: '+ field_name)
-        self.field_min_max[field_name][0] = self.cmap_min.value 
-        self.field_min_max[field_name][1] = self.cmap_max.value
-        self.field_min_max[field_name][2] = self.cmap_fixed_toggle.value
+        # print('substrate_field_cb: '+ field_name)
+        self.field_min_max[field_name][0] = self.colormap_min.value 
+        self.field_min_max[field_name][1] = self.colormap_max.value
+        self.field_min_max[field_name][2] = self.colormap_fixed_toggle.value
 
-#        self.field_index = self.mcds_field.value + 4
+#        self.field_index = self.substrate_choice.value + 4
 #        print('field_index=',self.field_index)
-        self.i_plot.update()
+        if not self.skip_cb:
+            print("substrate_field_cb: i_plot.update,  field_index=",self.field_index)
+            self.i_plot.update()
 
     #------------------------------------------------------------
     def update_custom_data(self,b):
-        print('----- update_custom_data')
-        # self.plot_cell_custom_data()
-        # self.plot_cell_custom_data_0("time", ["assembled_virion"], 20)
-        # self.plot_cell_custom_data_0("time", ["assembled_virion"], -1)
-        # self.i_plot.update()
+        # print('----- update_custom_data')
 
         cwd = os.getcwd()
         # print('plot_cell_custom_data: cwd=',cwd)
@@ -575,14 +649,11 @@ class SubstrateTab(object):
         xml_files = glob.glob('output*.xml')
         # xml_files = glob.glob(os.path.join('tmpdir', 'output*.xml'))
         xml_files.sort()
-        # print('plot_cell_custom_data: xml_files[0]=',xml_files[0])
         os.chdir(cwd)
 
         ds_count = len(xml_files)
-        # print('plot_cell_custom_data: ds_count=',ds_count)
         # mcds = [pyMCDS(xml_files[i], '.') for i in range(ds_count)]
         mcds = [pyMCDS(xml_files[i], 'tmpdir') for i in range(ds_count)]
-        # print('plot_cell_custom_data: mcds[0]=',mcds[0])
 
         # def cell_data_plot(xname, yname_list, t):
         discrete_cells_names = ['virion', 'assembled_virion']
@@ -621,6 +692,9 @@ class SubstrateTab(object):
                     self.yval = np.array([len(mcds[0].data['discrete_cells']['ID']) - len(mcds[i].data['discrete_cells']['ID']) for i in range(ds_count)]) \
                     + np.array([(mcds[i].data['discrete_cells']['cycle_model'] >= 6).sum() for i in range(ds_count)])
 
+        print("update_custom_data():  i_plot.update")
+        self.i_plot.update()
+
     #------------------------------------------------------------
     # def plot_cell_custom_data_dummy(self):
     #     print('----- plot_cell_custom_data()')
@@ -640,12 +714,20 @@ class SubstrateTab(object):
         # print('plot_cell_custom_data: self.output_dir=',self.output_dir)
 
         p = self.ax1.plot(self.xval, self.yval, label=self.yname)
+
         # print('xval=',xval)  # [   0.   60.  120. ...
         # print('yval=',yval)  # [2793 2793 2793 ...
         # print('t=',t)
 
-        if (t >= 0):
-            self.ax1.plot(self.xval[t], self.yval[t], p[-1].get_color(), marker='o')
+        # if (t >= 0):
+        if (t >= 0 and len(self.xval) > 1):
+            # print('self.xval=',self.xval)  # [   0.   60.  120. ...
+            # array = np.asarray(self.xval)
+            # idx = (np.abs(array - t)).argmin()
+            # print('closest value idx =',idx)
+            # self.ax1.plot(self.xval[t], self.yval[t], p[-1].get_color(), marker='o')
+            self.ax1.plot(self.xval[self.substrate_frame], self.yval[self.substrate_frame], p[-1].get_color(), marker='o')
+            # self.ax1.plot(self.xval[self.substrate_frame], self.yval[self.substrate_frame], marker='o')
 
             # self.ax1.gca().spines['top'].set_visible(False)
             # self.ax1.gca().spines['right'].set_visible(False)
@@ -960,9 +1042,15 @@ class SubstrateTab(object):
         # Assume: # .svg files >= # substrate files
 #        if (self.cells_toggle.value):
 
-        if (self.substrates_toggle.value):
+        if self.substrates_toggle.value:
             # maybe only show 2nd plot if self.custom_data_toggle is True
-            self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(30, 12))
+            if self.custom_data_toggle.value:  # substrates and 2D plots 
+                # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(30, 12))
+                self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(self.figsize_width_substrate + self.figsize_width_2Dplot, self.figsize_height_substrate))
+            else:  # substrates plot, but no 2D plot
+                print('plot sub:  sub w,h= ',self.figsize_width_substrate,self.figsize_height_substrate)
+                self.fig, (self.ax0) = plt.subplots(1, 1, figsize=(self.figsize_width_substrate, self.figsize_height_substrate))
+                # self.fig, (self.ax0) = plt.subplots(1, 1, figsize=(12, 12))
 
 
             if (self.customized_output_freq and (frame > self.max_svg_frame_pre_therapy)):
@@ -1011,17 +1099,17 @@ class SubstrateTab(object):
 #                ygrid = M[1, :].reshape(self.numy, self.numx)
 
             num_contours = 15
-            levels = MaxNLocator(nbins=num_contours).tick_values(self.cmap_min.value, self.cmap_max.value)
+            levels = MaxNLocator(nbins=num_contours).tick_values(self.colormap_min.value, self.colormap_max.value)
             contour_ok = True
-            if (self.cmap_fixed_toggle.value):
+            if (self.colormap_fixed_toggle.value):
                 try:
-                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy, self.numx), levels=levels, extend='both', cmap=self.field_cmap.value, fontsize=self.fontsize)
+                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy, self.numx), levels=levels, extend='both', cmap=self.field_colormap.value, fontsize=self.fontsize)
                 except:
                     contour_ok = False
                     # print('got error on contourf 1.')
             else:    
                 try:
-                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy,self.numx), num_contours, cmap=self.field_cmap.value)
+                    substrate_plot = self.ax0.contourf(xgrid, ygrid, M[self.field_index, :].reshape(self.numy,self.numx), num_contours, cmap=self.field_colormap.value)
                 except:
                     contour_ok = False
                     # print('got error on contourf 2.')
@@ -1035,12 +1123,17 @@ class SubstrateTab(object):
             self.ax0.set_ylim(self.ymin, self.ymax)
 
         # Now plot the cells (possibly on top of the substrate)
-        if (self.cells_toggle.value):
-            if (not self.substrates_toggle.value):
+        if self.cells_toggle.value:
+            if not self.substrates_toggle.value:
                 # maybe only show 2nd plot if self.custom_data_toggle is True
                 # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(self.figsize_width_svg*2, self.figsize_height_svg))
                 # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(24, 12))
-                self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(20, 10))
+                if self.custom_data_toggle.value:  # cells (SVG) and 2D plot (no substrate)
+                    # self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(20, 10))
+                    self.fig, (self.ax0, self.ax1) = plt.subplots(1, 2, figsize=(self.figsize_width_svg + self.figsize_width_2Dplot, self.figsize_height_svg))
+                else:  # cells (SVG), but no 2D plot (and no substrate)
+                    # print('plot svg:  svg w,h= ',self.figsize_width_svg,self.figsize_height_svg)
+                    self.fig, (self.ax0) = plt.subplots(1, 1, figsize=(self.figsize_width_svg, self.figsize_height_svg))
 
             self.svg_frame = frame
             # print('plot_svg with frame=',self.svg_frame)
@@ -1048,9 +1141,7 @@ class SubstrateTab(object):
 
         if (self.custom_data_toggle.value):
             # print('custom_data_toggle.value =',self.custom_data_toggle.value )
-            self.plot_cell_custom_data("time", ["assembled_virion"], -1)
-
-            # if not self.custom_data_plotted:
-            #     # self.plot_cell_custom_data()
-            #     # self.plot_cell_custom_data('time', ['susceptible_cells', 'infected_cells', 'dead_cells'], 20)
-            #     self.custom_data_plotted = True
+            # self.plot_cell_custom_data("time", ["assembled_virion"], -1)
+            # print('self.substrate_frame = ',self.substrate_frame)
+            self.substrate_frame = int(frame / self.modulo)
+            self.plot_cell_custom_data("time", ["assembled_virion"], self.substrate_frame)
