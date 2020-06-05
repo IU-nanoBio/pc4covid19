@@ -1,9 +1,7 @@
 VERSION := $(shell grep . VERSION.txt | cut -f1 -d:)
-PROGRAM_NAME:= myproj
+PROGRAM_NAME := myproj
 
 CC := g++
-# CC := g++-mp-7 # typical macports compiler name
-# CC := g++-7 # typical homebrew compiler name 
 
 # Check for environment definitions of compiler 
 # e.g., on CC = g++-7 on OSX
@@ -12,9 +10,26 @@ ifdef PHYSICELL_CPP
 endif
 
 ARCH := native # best auto-tuning
+# ARCH := core2 # a reasonably safe default for most CPUs since 2007
+# ARCH := corei7
+# ARCH := corei7-avx # earlier i7 
+# ARCH := core-avx-i # i7 ivy bridge or newer 
+# ARCH := core-avx2 # i7 with Haswell or newer
+# ARCH := nehalem
+# ARCH := westmere
+# ARCH := sandybridge # circa 2011
+# ARCH := ivybridge   # circa 2012
+# ARCH := haswell     # circa 2013
+# ARCH := broadwell   # circa 2014
+# ARCH := skylake     # circa 2015
+# ARCH := bonnell
+# ARCH := silvermont
+# ARCH := skylake-avx512
+# ARCH := nocona #64-bit pentium 4 or later 
 
 # CFLAGS := -march=$(ARCH) -Ofast -s -fomit-frame-pointer -mfpmath=both -fopenmp -m64 -std=c++11
 # remove the -march arg to avoid SIGILL error on nanoHUB
+#CFLAGS := -march=$(ARCH) -O3 -fomit-frame-pointer -mfpmath=both -fopenmp -m64 -std=c++11
 CFLAGS := -O3 -fomit-frame-pointer -mfpmath=both -fopenmp -m64 -std=c++11
 
 COMPILE_COMMAND := $(CC) $(CFLAGS) 
@@ -30,7 +45,7 @@ PhysiCell_pugixml.o PhysiCell_settings.o
 
 # put your custom objects here (they should be in the custom_modules directory)
 
-PhysiCell_custom_module_OBJECTS := custom.o submodel_data_structures.o internal_viral_dynamics.o internal_viral_response.o receptor_dynamics.o
+PhysiCell_custom_module_OBJECTS := custom.o submodel_data_structures.o internal_viral_dynamics.o internal_viral_response.o receptor_dynamics.o immune_submodels.o epithelium_submodel.o
 
 pugixml_OBJECTS := pugixml.o
 
@@ -136,20 +151,16 @@ internal_viral_response.o: ./custom_modules/internal_viral_response.cpp
 
 receptor_dynamics.o: ./custom_modules/receptor_dynamics.cpp
 	$(COMPILE_COMMAND) -c ./custom_modules/receptor_dynamics.cpp
+	
+immune_submodels.o: ./custom_modules/immune_submodels.cpp
+	$(COMPILE_COMMAND) -c ./custom_modules/immune_submodels.cpp 
+	
+epithelium_submodel.o: ./custom_modules/epithelium_submodel.cpp
+	$(COMPILE_COMMAND) -c ./custom_modules/epithelium_submodel.cpp 
 
 # cleanup
-
-reset:
-	rm -f *.cpp 
-	cp ./sample_projects/Makefile-default Makefile 
-	rm -f ./custom_modules/*
-	touch ./custom_modules/empty.txt 
-	touch ALL_CITATIONS.txt 
-	rm ALL_CITATIONS.txt 
-	cp ./config/PhysiCell_settings-backup.xml ./config/PhysiCell_settings.xml 
-	
 # next 2 targets for nanoHUB
-install: 
+install:
 	. /etc/environ.sh; use -e -r anaconda3-5.1; make all
 	cp $(PROGRAM_NAME) ../bin
 
@@ -158,7 +169,7 @@ distclean: clean
 
 clean:
 	rm -f *.o
-	rm -f $(PROGRAM_NAME)
+	rm -f $(PROGRAM_NAME)*
 	
 data-cleanup:
 	rm -f *.mat
@@ -168,6 +179,15 @@ data-cleanup:
 	mkdir ./output
 	touch ./output/empty.txt
 	
+FOLDER := output
+FRAMERATE := 24
+movie:
+	#copy $(FOLDER)/snap*.jpg .
+	mencoder "mf://snapshot*.jpg" -ovc lavc -lavcopts vcodec=mpeg4:vbitrate=10000:mbd=2:trell -mf fps=$(FRAMERATE):type=jpg -nosound -o out.avi	
+	# mencoder "mf://snapshot*.jpg" -ovc lavc -lavcopts vcodec=mpeg4:vbitrate=10000:mbd=2:trell -mf fps=$(FRAMERATE):type=jpg -nosound -o out.mp4 -of mpeg
+	ffmpeg -i out.avi -vcodec libx264 -pix_fmt yuv420p -strict -2 -acodec aac out.mp4
+	ffmpeg -r 24 -f image2 -i snapshot%08d.jpg -vcodec libx264 -pix_fmt yuv420p -strict -2 -acodec aac out1.mp4
+	#del snap*.jpg
 # archival 
 	
 checkpoint: 
